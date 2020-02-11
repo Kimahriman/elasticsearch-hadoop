@@ -1,22 +1,3 @@
-/*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
-
 package org.elasticsearch.spark.integration
 
 import java.io.File
@@ -46,8 +27,6 @@ import org.elasticsearch.hadoop.util.EsMajorVersion
 import org.elasticsearch.hadoop.util.StringUtils
 import org.elasticsearch.hadoop.util.TestSettings
 import org.elasticsearch.hadoop.util.TestUtils
-import org.elasticsearch.hadoop.util.TestUtils.resource
-import org.elasticsearch.hadoop.util.TestUtils.docEndpoint
 import org.elasticsearch.spark.sql.streaming.SparkSqlStreamingConfigs
 import org.elasticsearch.spark.sql.streaming.StreamingQueryTestHarness
 import org.hamcrest.Matchers.containsString
@@ -144,7 +123,6 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
 
   val spark: SparkSession = AbstractScalaEsSparkStructuredStreaming.spark
     .getOrElse(throw new EsHadoopIllegalStateException("Spark not started..."))
-  val version: EsMajorVersion = TestUtils.getEsClusterInfo.getMajorVersion
 
   import org.elasticsearch.spark.integration.Products._
   import spark.implicits._
@@ -196,7 +174,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
   @Test(expected = classOf[EsHadoopIllegalArgumentException])
   def test1FailOnIncorrectSaveCall(): Unit = {
     import org.elasticsearch.spark.sql._
-    val target = wrapIndex(resource("failed-on-save-call", "data", version))
+    val target = wrapIndex("failed-on-save-call/data")
     val test = new StreamingQueryTestHarness[Record](spark)
 
     test.stream.saveToEs(target)
@@ -206,7 +184,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
 
   @Test(expected = classOf[EsHadoopIllegalArgumentException])
   def test1FailOnCompleteMode(): Unit = {
-    val target = wrapIndex(resource("failed-on-complete-mode", "data", version))
+    val target = wrapIndex("failed-on-complete-mode/data")
     val test = new StreamingQueryTestHarness[Record](spark)
 
     test.withInput(Record(1, "Spark"))
@@ -225,7 +203,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
 
   @Test(expected = classOf[EsHadoopIllegalArgumentException])
   def test1FailOnPartitions(): Unit = {
-    val target = wrapIndex(resource("failed-on-partitions", "data", version))
+    val target = wrapIndex("failed-on-partitions/data")
     val test = new StreamingQueryTestHarness[Record](spark)
 
     test.withInput(Record(1, "Spark"))
@@ -243,7 +221,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
 
   @Test
   def test2BasicWriteWithoutCommitLog(): Unit = {
-    val target = wrapIndex(resource("test-basic-write-no-commit", "data", version))
+    val target = wrapIndex("test-basic-write-no-commit/data")
     val test = new StreamingQueryTestHarness[Record](spark)
 
     test.withInput(Record(1, "Spark"))
@@ -269,7 +247,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
 
   @Test
   def test2BasicWrite(): Unit = {
-    val target = wrapIndex(resource("test-basic-write", "data", version))
+    val target = wrapIndex("test-basic-write/data")
     val test = new StreamingQueryTestHarness[Record](spark)
 
     test.withInput(Record(1, "Spark"))
@@ -298,7 +276,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
       val check = s"${AbstractScalaEsSparkStructuredStreaming.commitLogDir}/session1"
       spark.conf.set(SQLConf.CHECKPOINT_LOCATION.key, check)
 
-      val target = wrapIndex(resource("test-basic-write", "data", version))
+      val target = wrapIndex("test-basic-write/data")
       val test = new StreamingQueryTestHarness[Record](spark)
 
       test.withInput(Record(1, "Spark"))
@@ -332,7 +310,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
       val check = s"${AbstractScalaEsSparkStructuredStreaming.commitLogDir}/session2"
       spark.conf.set(SQLConf.CHECKPOINT_LOCATION.key, check)
 
-      val target = wrapIndex(resource("test-basic-write", "data", version))
+      val target = wrapIndex("test-basic-write/data")
       val test = new StreamingQueryTestHarness[Record](spark)
 
       test.withInput(Record(1, "Spark"))
@@ -362,7 +340,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
 
   @Test(expected = classOf[EsHadoopIllegalArgumentException])
   def test1FailOnIndexCreationDisabled(): Unit = {
-    val target = wrapIndex(resource("test-write-index-create-disabled", "data", version))
+    val target = wrapIndex("test-write-index-create-disabled/data")
     val test = new StreamingQueryTestHarness[Record](spark)
 
     test.withInput(Record(1, "Spark"))
@@ -383,8 +361,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
 
   @Test
   def test2WriteWithMappingId(): Unit = {
-    val target = wrapIndex(resource("test-write-with-id", "data", version))
-    val docPath = wrapIndex(docEndpoint("test-write-with-id", "data", version))
+    val target = wrapIndex("test-write-with-id/data")
     val test = new StreamingQueryTestHarness[Record](spark)
 
     test.withInput(Record(1, "Spark"))
@@ -400,9 +377,9 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
       }
 
     assertTrue(RestUtils.exists(target))
-    assertTrue(RestUtils.exists(docPath + "/1"))
-    assertTrue(RestUtils.exists(docPath + "/2"))
-    assertTrue(RestUtils.exists(docPath + "/3"))
+    assertTrue(RestUtils.exists(target + "/1"))
+    assertTrue(RestUtils.exists(target + "/2"))
+    assertTrue(RestUtils.exists(target + "/3"))
     val searchResult = RestUtils.get(target + "/_search?")
     assertThat(searchResult, containsString("Spark"))
     assertThat(searchResult, containsString("Hadoop"))
@@ -411,7 +388,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
 
   @Test
   def test2WriteWithMappingExclude(): Unit = {
-    val target = wrapIndex(resource("test-write-with-exclude", "data", version))
+    val target = wrapIndex("test-write-with-exclude/data")
     val test = new StreamingQueryTestHarness[Record](spark)
 
     test.withInput(Record(1, "Spark"))
@@ -442,7 +419,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
     val pipeline: String = """{"description":"Test Pipeline","processors":[{"set":{"field":"pipeTEST","value":true,"override":true}}]}"""
     RestUtils.put("/_ingest/pipeline/" + pipelineName, StringUtils.toUTF(pipeline))
 
-    val target = wrapIndex(resource("test-write-ingest", "data", version))
+    val target = wrapIndex("test-write-ingest/data")
     val test = new StreamingQueryTestHarness[Record](spark)
 
     test.withInput(Record(1, "Spark"))
@@ -467,7 +444,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
 
   @Test
   def test2MultiIndexWrite(): Unit = {
-    val target = wrapIndex(resource("test-tech-{name}", "data", version))
+    val target = wrapIndex("test-tech-{name}/data")
     val test = new StreamingQueryTestHarness[Record](spark)
 
     test.withInput(Record(1, "spark"))
@@ -480,16 +457,15 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
           .start(target)
       }
 
-    assertTrue(RestUtils.exists(wrapIndex(resource("test-tech-spark", "data", version))))
-    assertTrue(RestUtils.exists(wrapIndex(resource("test-tech-hadoop", "data", version))))
-    assertThat(wrapIndex(resource("test-tech-spark", "data", version) + "/_search?"), containsString("spark"))
-    assertThat(wrapIndex(resource("test-tech-hadoop", "data", version) + "/_search?"), containsString("hadoop"))
+    assertTrue(RestUtils.exists(wrapIndex("test-tech-spark/data")))
+    assertTrue(RestUtils.exists(wrapIndex("test-tech-hadoop/data")))
+    assertThat(wrapIndex("test-tech-spark/data/_search?"), containsString("spark"))
+    assertThat(wrapIndex("test-tech-hadoop/data/_search?"), containsString("hadoop"))
   }
 
   @Test
   def test2NullValueIgnored() {
-    val target = wrapIndex(resource("test-null-data-absent", "data", version))
-    val docPath = wrapIndex(docEndpoint("test-null-data-absent", "data", version))
+    val target = wrapIndex("test-null-data-absent/data")
     val test = new StreamingQueryTestHarness[Record](spark)
 
     test.withInput(Record(1, "Spark"))
@@ -504,14 +480,13 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
       }
 
     assertTrue(RestUtils.exists(target))
-    assertThat(RestUtils.get(docPath + "/1"), containsString("name"))
-    assertThat(RestUtils.get(docPath + "/2"), not(containsString("name")))
+    assertThat(RestUtils.get(target + "/1"), containsString("name"))
+    assertThat(RestUtils.get(target + "/2"), not(containsString("name")))
   }
 
   @Test
   def test2NullValueWritten() {
-    val target = wrapIndex(resource("test-null-data-null", "data", version))
-    val docPath = wrapIndex(docEndpoint("test-null-data-null", "data", version))
+    val target = wrapIndex("test-null-data-null/data")
     val test = new StreamingQueryTestHarness[Record](spark)
 
     test.withInput(Record(1, "Spark"))
@@ -527,14 +502,13 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
       }
 
     assertTrue(RestUtils.exists(target))
-    assertThat(RestUtils.get(docPath + "/1"), containsString("name"))
-    assertThat(RestUtils.get(docPath + "/2"), containsString("name"))
+    assertThat(RestUtils.get(target + "/1"), containsString("name"))
+    assertThat(RestUtils.get(target + "/2"), containsString("name"))
   }
 
   @Test
   def test2WriteWithRichMapping() {
-    val target = wrapIndex(resource("test-basic-write-rich-mapping-id", "data", version))
-    val docPath = wrapIndex(docEndpoint("test-basic-write-rich-mapping-id", "data", version))
+    val target = wrapIndex("test-basic-write-rich-mapping-id/data")
     val test = new StreamingQueryTestHarness[Text](spark)
 
     Source.fromURI(TestUtils.sampleArtistsDatUri())(Codec.ISO8859).getLines().foreach(s => test.withInput(Text(s)))
@@ -560,12 +534,12 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
 
     assertTrue(RestUtils.exists(target))
     assertThat(RestUtils.get(target + "/_search?"), containsString("345"))
-    assertThat(RestUtils.exists(docPath+"/1"), is(true))
+    assertThat(RestUtils.exists(target+"/1"), is(true))
   }
 
   @Test
   def test1FailOnDecimalType() {
-    val target = wrapIndex(resource("test-decimal-exception", "data", version))
+    val target = wrapIndex("test-decimal-exception/data")
     val test = new StreamingQueryTestHarness[DecimalData](spark)
 
     test.withInput(DecimalData(Decimal(10)))

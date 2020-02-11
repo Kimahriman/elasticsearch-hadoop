@@ -19,6 +19,7 @@
 package org.elasticsearch.spark.sql
 
 import scala.collection.Map
+
 import org.apache.commons.logging.Log
 import org.apache.commons.logging.LogFactory
 import org.apache.spark.Partition
@@ -33,12 +34,10 @@ import org.elasticsearch.spark.rdd.AbstractEsRDD
 import org.elasticsearch.spark.rdd.AbstractEsRDDIterator
 import org.elasticsearch.spark.rdd.EsPartition
 
-import scala.annotation.meta.param
-
 // while we could have just wrapped the ScalaEsRDD and unpack the top-level data into a Row the issue is the underlying Maps are StructTypes
 // and as such need to be mapped as Row resulting in either nested wrapping or using a ValueReader and which point wrapping becomes unyielding since the class signatures clash
 private[spark] class ScalaEsRowRDD(
-  @(transient @param) sc: SparkContext,
+  @transient sc: SparkContext,
   params: Map[String, String] = Map.empty,
   schema: SchemaUtils.Schema)
   extends AbstractEsRDD[Row](sc, params) {

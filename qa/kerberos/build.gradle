@@ -48,7 +48,7 @@ dependencies {
     compile project(":elasticsearch-storm")
 
     compile 'org.scala-lang:scala-library:2.11.8'
-    compile project(":elasticsearch-spark-20")
+    compile project(":elasticsearch-spark-30")
 
     if (!localRepo) {
         // These try to pull in the elasticsearch jar, but when running with a local repo it is not available

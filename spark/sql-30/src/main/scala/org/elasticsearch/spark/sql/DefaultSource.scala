@@ -612,7 +612,7 @@ private[sql] case class ElasticsearchRelation(parameters: Map[String, String], @
       cfgCopy.setProperty(ConfigurationOptions.ES_BATCH_SIZE_ENTRIES, "1000")
       cfgCopy.setProperty(ConfigurationOptions.ES_BATCH_SIZE_BYTES, "1mb")
       val rr = new RestRepository(cfgCopy)
-      if (rr.resourceExists(false)) {
+      if (rr.indexExists(false)) {
         rr.delete()
       }
       rr.close()

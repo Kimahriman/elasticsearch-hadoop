@@ -28,7 +28,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.security.Credentials
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.SparkConf
-import org.apache.spark.deploy.yarn.security.ServiceCredentialProvider
+import org.apache.spark.security.HadoopDelegationTokenProvider
 import org.elasticsearch.hadoop.cfg.CompositeSettings
 import org.elasticsearch.hadoop.cfg.HadoopSettingsManager
 import org.elasticsearch.hadoop.mr.security.EsTokenIdentifier
@@ -60,7 +60,7 @@ import org.elasticsearch.spark.cfg.SparkSettingsManager
  * the worker nodes will regularly poll to get updated tokens. If the job is launched
  * in client mode, the client will also receive updated tokens.
  */
-class EsServiceCredentialProvider extends ServiceCredentialProvider {
+class EsServiceCredentialProvider extends HadoopDelegationTokenProvider {
 
   private[this] val LOG = LogFactory.getLog(classOf[EsServiceCredentialProvider])
 
@@ -74,15 +74,6 @@ class EsServiceCredentialProvider extends ServiceCredentialProvider {
    */
   override def serviceName: String = "elasticsearch"
 
-  /**
-    *  Given a configuration, check to see if tokens would be required.
-    *
-    * @param hadoopConf the current Hadoop configuration
-    * @return true if tokens should be gathered, false if they should not be
-    */
-  override def credentialsRequired(hadoopConf: Configuration): Boolean = {
-    credentialsRequired(null, hadoopConf)
-  }
 
   /**
     *  Given a configuration, check to see if tokens would be required.
@@ -91,7 +82,7 @@ class EsServiceCredentialProvider extends ServiceCredentialProvider {
     * @param hadoopConf the current Hadoop configuration
     * @return true if tokens should be gathered, false if they should not be
     */
-  def credentialsRequired(sparkConf: SparkConf, hadoopConf: Configuration): Boolean = {
+  def delegationTokensRequired(sparkConf: SparkConf, hadoopConf: Configuration): Boolean = {
     val settings = if (sparkConf != null) {
       new CompositeSettings(util.Arrays.asList(
         new SparkSettingsManager().load(sparkConf),
@@ -116,7 +107,7 @@ class EsServiceCredentialProvider extends ServiceCredentialProvider {
    * @param creds The credentials object that will be shared between all workers
    * @return The expiration time for the token
    */
-  override def obtainCredentials(hadoopConf: Configuration, sparkConf: SparkConf, creds: Credentials): Option[Long] = {
+  override def obtainDelegationTokens(hadoopConf: Configuration, sparkConf: SparkConf, creds: Credentials): Option[Long] = {
     val settings = new CompositeSettings(util.Arrays.asList(
       new SparkSettingsManager().load(sparkConf),
       new HadoopSettingsManager().load(hadoopConf)
