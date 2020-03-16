@@ -18,7 +18,7 @@
  */
 package org.elasticsearch.spark.rdd;
 
-import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 import org.apache.commons.logging.LogFactory
 import org.apache.spark.Partition
