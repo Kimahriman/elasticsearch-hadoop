@@ -9,6 +9,10 @@ build {
     dependsOn 'hadoopTestingJar'
 }
 
+repositories {
+    mavenLocal()
+}
+
 task wrapper(type: Wrapper) {
     description = 'Generates gradlew[.bat] scripts'
     gradleVersion = '4.5'

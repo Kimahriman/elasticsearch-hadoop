@@ -39,6 +39,10 @@ compileScala {
     targetCompatibility = 1.6
 }
 
+repositories {
+    mavenLocal()
+}
+
 String coreSrc = file("$projectDir/../core").absolutePath.replace('\\','/')
 
 sourceSets {
