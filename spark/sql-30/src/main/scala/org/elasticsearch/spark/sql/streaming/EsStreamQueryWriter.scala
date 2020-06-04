@@ -48,7 +48,7 @@ private [sql] class EsStreamQueryWriter(serializedSettings: String,
   }
 
   override protected def processData(data: Iterator[InternalRow]): Any = {
-    val row = encoder.fromRow(data.next())
+    val row = encoder.createDeserializer()(data.next())
     commitProtocol.recordSeen()
     (row, schema)
   }

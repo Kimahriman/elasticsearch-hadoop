@@ -37,6 +37,10 @@ compileScala {
     ]
 }
 
+repositories {
+    mavenLocal()
+}
+
 String coreSrc = file("$projectDir/../core").absolutePath.replace('\\','/')
 
 sourceSets {
