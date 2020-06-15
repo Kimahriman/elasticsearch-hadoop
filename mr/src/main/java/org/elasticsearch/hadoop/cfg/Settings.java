@@ -667,6 +667,10 @@ public abstract class Settings {
         return Booleans.parseBoolean(getProperty(ES_SPARK_DATAFRAME_WRITE_NULL_VALUES, ES_SPARK_DATAFRAME_WRITE_NULL_VALUES_DEFAULT));
     }
 
+    public String getSparkWriteTimestampFormat() {
+        return getProperty(ES_SPARK_WRITE_TIMESTAMP_FORMAT, ES_SPARK_WRITE_TIMESTAMP_FORMAT_DEFAULT);
+    }
+
     public boolean getInputUseSlicedPartitions() {
         return Booleans.parseBoolean(getProperty(ES_INPUT_USE_SLICED_PARTITIONS, ES_INPUT_USE_SLICED_PARTITIONS_DEFAULT));
     }

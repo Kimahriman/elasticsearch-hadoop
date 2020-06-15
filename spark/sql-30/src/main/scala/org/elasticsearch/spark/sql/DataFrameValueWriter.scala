@@ -20,6 +20,7 @@ package org.elasticsearch.spark.sql
 
 import java.sql.Date
 import java.sql.Timestamp
+import java.text.SimpleDateFormat
 import java.util.{Map => JMap}
 
 import scala.collection.JavaConverters.mapAsScalaMapConverter
@@ -42,6 +43,7 @@ import org.apache.spark.sql.types.DataTypes.TimestampType
 import org.apache.spark.sql.types.MapType
 import org.apache.spark.sql.types.StructType
 import org.elasticsearch.hadoop.cfg.ConfigurationOptions.ES_SPARK_DATAFRAME_WRITE_NULL_VALUES_DEFAULT
+import org.elasticsearch.hadoop.cfg.ConfigurationOptions.ES_SPARK_WRITE_TIMESTAMP_FORMAT_DEFAULT
 import org.elasticsearch.hadoop.cfg.Settings
 import org.elasticsearch.hadoop.serialization.EsHadoopSerializationException
 import org.elasticsearch.hadoop.serialization.Generator
@@ -57,10 +59,16 @@ class DataFrameValueWriter(writeUnknownTypes: Boolean = false) extends Filtering
   }
 
   private var writeNullValues = Booleans.parseBoolean(ES_SPARK_DATAFRAME_WRITE_NULL_VALUES_DEFAULT)
+  private var timestampFormatter: Option[SimpleDateFormat] = None
 
   override def setSettings(settings: Settings): Unit = {
     super.setSettings(settings)
     writeNullValues = settings.getDataFrameWriteNullValues
+    
+    val timestampFormat = settings.getSparkWriteTimestampFormat
+    if (timestampFormat != "") {
+      timestampFormatter = Some(new SimpleDateFormat(timestampFormat))
+    }
   }
 
   override def write(value: (Row, StructType), generator: Generator): Result = {
@@ -169,8 +177,14 @@ class DataFrameValueWriter(writeUnknownTypes: Boolean = false) extends Filtering
       case LongType      => generator.writeNumber(value.asInstanceOf[Long])
       case DoubleType    => generator.writeNumber(value.asInstanceOf[Double])
       case FloatType     => generator.writeNumber(value.asInstanceOf[Float])
-      case TimestampType => generator.writeNumber(value.asInstanceOf[Timestamp].getTime())
-      case DateType      => generator.writeNumber(value.asInstanceOf[Date].getTime())
+      case TimestampType => timestampFormatter match {
+        case Some(formatter) => generator.writeString(formatter.format(new Date(value.asInstanceOf[Timestamp].getTime())))
+        case None => generator.writeNumber(value.asInstanceOf[Timestamp].getTime())
+      }
+      case DateType      => timestampFormatter match {
+        case Some(formatter) => generator.writeString(formatter.format(new Date(value.asInstanceOf[Date].getTime())))
+        case None => generator.writeNumber(value.asInstanceOf[Date].getTime())
+      }
       case StringType    => generator.writeString(value.toString)
       case _             => {
         val className = schema.getClass().getName()

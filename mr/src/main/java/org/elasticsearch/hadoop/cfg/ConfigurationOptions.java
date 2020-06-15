@@ -210,6 +210,9 @@ public interface ConfigurationOptions {
     String ES_SPARK_DATAFRAME_WRITE_NULL_VALUES = "es.spark.dataframe.write.null";
     String ES_SPARK_DATAFRAME_WRITE_NULL_VALUES_DEFAULT = "false";
 
+    String ES_SPARK_WRITE_TIMESTAMP_FORMAT = "es.spark.timetamp.write.format";
+    String ES_SPARK_WRITE_TIMESTAMP_FORMAT_DEFAULT = "";
+
     /** Read settings */
 
     /** Field options **/

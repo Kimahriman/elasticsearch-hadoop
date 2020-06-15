@@ -15,11 +15,6 @@ variants {
 println "Compiled using Scala ${project.ext.scalaMajorVersion} [${project.ext.scalaVersion}]"
 String sparkVersion = spark30Version
 
-// Revert to spark 2.2.0 for scala 2.10 as 2.3+ does not support scala 2.10
-if (project.ext.scalaMajorVersion == '2.10') {
-    sparkVersion = '2.2.0'
-}
-
 compileScala {
     configure(scalaCompileOptions.forkOptions) {
         memoryMaximumSize = '1g'
