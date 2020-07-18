@@ -672,6 +672,10 @@ public abstract class Settings {
         return Booleans.parseBoolean(getProperty(ES_SPARK_DATAFRAME_WRITE_NULL_VALUES, ES_SPARK_DATAFRAME_WRITE_NULL_VALUES_DEFAULT));
     }
 
+    public String getSparkWriteTimestampFormat() {
+        return getProperty(ES_SPARK_DATAFRAME_WRITE_TIMESTAMP_FORMAT, ES_SPARK_DATAFRAME_WRITE_TIMESTAMP_FORMAT_DEFAULT);
+    }
+
     public AuthenticationMethod getSecurityAuthenticationMethod() {
         AuthenticationMethod authMode = null;
         String authSetting = getProperty(ConfigurationOptions.ES_SECURITY_AUTHENTICATION);
