@@ -1,6 +1,9 @@
 package org.elasticsearch.spark.sql
 
 import java.io.ByteArrayOutputStream
+import java.sql.Date
+import java.sql.Timestamp
+import java.text.SimpleDateFormat
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.ScalaReflection
@@ -10,6 +13,7 @@ import org.apache.spark.sql.types.MapType
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.TimestampType
 import org.elasticsearch.hadoop.cfg.ConfigurationOptions
 import org.elasticsearch.hadoop.cfg.Settings
 import org.elasticsearch.hadoop.serialization.EsHadoopSerializationException
@@ -78,6 +82,19 @@ class DataFrameValueWriterTest {
     val schema = StructType(Seq(StructField("s", ArrayType(MapType(StringType, StringType)))))
     val row = Row(Seq(Map("a" -> "b")))
     assertEquals("""{"s":[{"a":"b"}]}""", serialize(row, schema))
+  }
+
+  @Test
+  def testTimestampFormat(): Unit = {
+    val schema = StructType(Seq(StructField("t", TimestampType)))
+
+    val now = System.currentTimeMillis()
+    val row = Row(new Timestamp(now))
+    assertEquals(s"""{"t":$now}""", serialize(row, schema))
+
+    val settings = new TestSettings()
+    settings.setProperty(ConfigurationOptions.ES_SPARK_DATAFRAME_WRITE_TIMESTAMP_FORMAT, "yyyy-MM-dd'T'HH:mm:ss'Z'")
+    assertEquals(s"""{"t":"${new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'").format(new Date(now))}"}""", serialize(row, schema, settings))
   }
 
   @Test
