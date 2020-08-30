@@ -1,76 +1,69 @@
 package org.elasticsearch.hadoop.gradle
 
-import org.apache.tools.ant.taskdefs.condition.Os
-import org.elasticsearch.gradle.VersionProperties
+import org.elasticsearch.gradle.DependenciesInfoPlugin
 import org.elasticsearch.gradle.info.BuildParams
-import org.gradle.api.GradleException
-import org.gradle.api.JavaVersion
+import org.elasticsearch.gradle.precommit.DependencyLicensesTask
+import org.elasticsearch.gradle.precommit.LicenseHeadersTask
+import org.elasticsearch.gradle.precommit.UpdateShasTask
+import org.elasticsearch.gradle.testclusters.RestTestRunnerTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.Dependency
 import org.gradle.api.artifacts.DependencyResolveDetails
-import org.gradle.api.artifacts.DependencySubstitutions
+import org.gradle.api.artifacts.ModuleDependency
+import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.artifacts.ResolutionStrategy
 import org.gradle.api.artifacts.maven.MavenPom
 import org.gradle.api.artifacts.maven.MavenResolver
+import org.gradle.api.attributes.LibraryElements
+import org.gradle.api.attributes.Usage
 import org.gradle.api.file.CopySpec
+import org.gradle.api.file.FileCollection
 import org.gradle.api.java.archives.Manifest
-import org.gradle.api.plugins.JavaPlugin
+import org.gradle.api.plugins.JavaLibraryPlugin
 import org.gradle.api.plugins.MavenPlugin
 import org.gradle.api.plugins.MavenPluginConvention
+import org.gradle.api.plugins.scala.ScalaPlugin
+import org.gradle.api.tasks.SourceSet
 import org.gradle.api.tasks.SourceSetContainer
+import org.gradle.api.tasks.TaskProvider
 import org.gradle.api.tasks.Upload
 import org.gradle.api.tasks.bundling.Jar
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.api.tasks.javadoc.Javadoc
 import org.gradle.api.tasks.testing.Test
-import org.gradle.api.tasks.testing.TestReport
 import org.gradle.external.javadoc.JavadocOutputLevel
 import org.gradle.external.javadoc.MinimalJavadocOptions
-import org.gradle.internal.jvm.Jvm
 import org.gradle.plugins.ide.eclipse.EclipsePlugin
 import org.gradle.plugins.ide.idea.IdeaPlugin
-import org.gradle.process.ExecResult
-import org.springframework.build.gradle.propdep.PropDepsEclipsePlugin
-import org.springframework.build.gradle.propdep.PropDepsIdeaPlugin
-import org.springframework.build.gradle.propdep.PropDepsMavenPlugin
-import org.springframework.build.gradle.propdep.PropDepsPlugin
 
 class BuildPlugin implements Plugin<Project> {
 
     @Override
     void apply(Project project) {
-        greet(project)
         configurePlugins(project)
-        configureVersions(project)
-        configureRuntimeSettings(project)
-        configureRepositories(project)
+        configureConfigurations(project)
         configureDependencies(project)
         configureBuildTasks(project)
         configureEclipse(project)
         configureMaven(project)
         configureIntegrationTestTask(project)
-        configureTestReports(project)
+        configurePrecommit(project)
+        configureDependenciesInfo(project)
     }
 
-    /**
-     * Say hello!
-     */
-    private static void greet(Project project) {
-        if (!project.rootProject.hasProperty('versionsConfigured') && !project.rootProject.hasProperty('shush')) {
-            println '==================================='
-            println 'ES-Hadoop Build Hamster says Hello!'
-            println '==================================='
-        }
-    }
     /**
      * Ensure that all common plugins required for the build to work are applied.
      * @param project to be configured
      */
     private static void configurePlugins(Project project) {
-        // Every project will need Java in it for the time being.
-        project.getPluginManager().apply(JavaPlugin.class)
+        // Configure global project settings
+        project.getPluginManager().apply(BaseBuildPlugin.class)
+
+        // BuildPlugin will continue to assume Java projects for the time being.
+        project.getPluginManager().apply(JavaLibraryPlugin.class)
 
         // IDE Support
         project.getPluginManager().apply(IdeaPlugin.class)
@@ -78,148 +71,94 @@ class BuildPlugin implements Plugin<Project> {
 
         // Maven Support
         project.getPluginManager().apply(MavenPlugin.class)
-
-        // Support for modeling provided/optional dependencies
-        project.getPluginManager().apply(PropDepsPlugin.class)
-        project.getPluginManager().apply(PropDepsIdeaPlugin.class)
-        project.getPluginManager().apply(PropDepsEclipsePlugin.class)
-        project.getPluginManager().apply(PropDepsMavenPlugin.class)
     }
 
-    /**
-     * Extract version information and load it into the build's extra settings
-     * @param project to be configured
-     */
-    private static void configureVersions(Project project) {
-        if (!project.rootProject.ext.has('versionsConfigured')) {
-            project.rootProject.version = EshVersionProperties.ESHADOOP_VERSION
-            println "Building version [${project.rootProject.version}]"
+    /** Return the configuration name used for finding transitive deps of the given dependency. */
+    private static String transitiveDepConfigName(String groupId, String artifactId, String version) {
+        return "_transitive_${groupId}_${artifactId}_${version}"
+    }
 
-            project.rootProject.ext.eshadoopVersion = EshVersionProperties.ESHADOOP_VERSION
-            project.rootProject.ext.elasticsearchVersion = EshVersionProperties.ELASTICSEARCH_VERSION
-            project.rootProject.ext.luceneVersion = VersionProperties.lucene
-            project.rootProject.ext.buildToolsVersion = EshVersionProperties.BUILD_TOOLS_VERSION
-            project.rootProject.ext.versions = EshVersionProperties.VERSIONS
-            project.rootProject.ext.versionsConfigured = true
+    private static void configureConfigurations(Project project) {
+        if (project != project.rootProject) {
+            // Set up avenues for sharing source files between projects in order to create embedded Javadocs
+            // Import source configuration
+            Configuration sources = project.configurations.create("additionalSources")
+            sources.canBeConsumed = false
+            sources.canBeResolved = true
+            sources.attributes {
+                // Changing USAGE is required when working with Scala projects, otherwise the source dirs get pulled
+                // into incremental compilation analysis.
+                attribute(Usage.USAGE_ATTRIBUTE, project.objects.named(Usage, 'java-source'))
+                attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, project.objects.named(LibraryElements, 'sources'))
+            }
 
-            println "Testing against Elasticsearch [${project.rootProject.ext.elasticsearchVersion}] with Lucene [${project.rootProject.ext.luceneVersion}]"
+            // Export source configuration
+            Configuration sourceElements = project.configurations.create("sourceElements")
+            sourceElements.canBeConsumed = true
+            sourceElements.canBeResolved = false
+            sourceElements.extendsFrom(sources)
+            sourceElements.attributes {
+                // Changing USAGE is required when working with Scala projects, otherwise the source dirs get pulled
+                // into incremental compilation analysis.
+                attribute(Usage.USAGE_ATTRIBUTE, project.objects.named(Usage, 'java-source'))
+                attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, project.objects.named(LibraryElements, 'sources'))
+            }
 
-            println "Using Gradle [${project.gradle.gradleVersion}]"
+            // Import javadoc sources
+            Configuration javadocSources = project.configurations.create("javadocSources")
+            javadocSources.canBeConsumed = false
+            javadocSources.canBeResolved = true
+            javadocSources.attributes {
+                // Changing USAGE is required when working with Scala projects, otherwise the source dirs get pulled
+                // into incremental compilation analysis.
+                attribute(Usage.USAGE_ATTRIBUTE, project.objects.named(Usage, 'javadoc-source'))
+                attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, project.objects.named(LibraryElements, 'sources'))
+            }
 
-            // Hadoop versions
-            project.rootProject.ext.hadoopClient = []
-            project.rootProject.ext.hadoopDistro = project.hasProperty("distro") ? project.getProperty("distro") : "hadoopStable"
+            // Export source configuration
+            Configuration javadocElements = project.configurations.create("javadocElements")
+            javadocElements.canBeConsumed = true
+            javadocElements.canBeResolved = false
+            javadocElements.extendsFrom(sources)
+            javadocElements.attributes {
+                // Changing USAGE is required when working with Scala projects, otherwise the source dirs get pulled
+                // into incremental compilation analysis.
+                attribute(Usage.USAGE_ATTRIBUTE, project.objects.named(Usage, 'javadoc-source'))
+                attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, project.objects.named(LibraryElements, 'sources'))
+            }
 
-            switch (project.rootProject.ext.hadoopDistro) {
-                // Hadoop YARN/2.0.x
-                case "hadoopYarn":
-                    String version = project.hadoop2Version
-                    project.rootProject.ext.hadoopVersion = version
-                    project.rootProject.ext.hadoopClient = ["org.apache.hadoop:hadoop-client:$version"]
-                    println "Using Apache Hadoop on YARN [$version]"
-                    break
-
-                default:
-                    String version = project.hadoop22Version
-                    project.rootProject.ext.hadoopVersion = version
-                    project.rootProject.ext.hadoopClient = ["org.apache.hadoop:hadoop-client:$version"]
-                    println "Using Apache Hadoop [$version]"
+            // Export configuration for archives that should be in the distribution
+            Configuration distElements = project.configurations.create('distElements')
+            distElements.canBeConsumed = true
+            distElements.canBeResolved = false
+            distElements.attributes {
+                attribute(Usage.USAGE_ATTRIBUTE, project.objects.named(Usage, 'packaging'))
             }
         }
-        project.ext.eshadoopVersion = project.rootProject.ext.eshadoopVersion
-        project.ext.elasticsearchVersion = project.rootProject.ext.elasticsearchVersion
-        project.ext.luceneVersion = project.rootProject.ext.luceneVersion
-        project.ext.buildToolsVersion = project.rootProject.ext.buildToolsVersion
-        project.ext.versions = project.rootProject.ext.versions
-        project.ext.hadoopVersion = project.rootProject.ext.hadoopVersion
-        project.ext.hadoopClient = project.rootProject.ext.hadoopClient
-        project.version = project.rootProject.version
-    }
 
-    /**
-     * Determine dynamic or runtime-based information and load it into the build's extra settings
-     * @param project to be configured
-     */
-    private static void configureRuntimeSettings(Project project) {
-        if (!project.rootProject.ext.has('settingsConfigured')) {
-            project.rootProject.ext.java8 = JavaVersion.current().isJava8Compatible()
-
-            File javaHome = findJavaHome()
-            // Register the currently running JVM version under its version number.
-            final Map<Integer, String> javaVersions = [:]
-            javaVersions.put(Integer.parseInt(JavaVersion.current().getMajorVersion()), javaHome)
-
-            project.rootProject.ext.javaHome = javaHome
-            project.rootProject.ext.runtimeJavaHome = javaHome
-            project.rootProject.ext.javaVersions = javaVersions
-
-            // Force any Elasticsearch test clusters to use packaged java versions if they have them available
-            project.rootProject.ext.isRuntimeJavaHomeSet = false
-
-            File gitHead = gitBranch(project)
-            project.rootProject.ext.gitHead = gitHead
-            project.rootProject.ext.revHash = gitHash(gitHead)
-            project.rootProject.ext.settingsConfigured = true
-
-            String inFipsJvmScript = 'print(java.security.Security.getProviders()[0].name.toLowerCase().contains("fips"));'
-            project.rootProject.ext.inFipsJvm = Boolean.parseBoolean(runJavascript(project, javaHome, inFipsJvmScript))
-
-            BuildParams.init { params ->
-                params.setInFipsJvm(project.rootProject.ext.inFipsJvm)
-                params.setIsRutimeJavaHomeSet(project.rootProject.ext.isRuntimeJavaHomeSet)
-            }
+        if (project.path.startsWith(":qa")) {
+            return
         }
-        project.ext.java8 = project.rootProject.ext.java8
-        project.ext.gitHead = project.rootProject.ext.gitHead
-        project.ext.revHash = project.rootProject.ext.revHash
-        project.ext.javaVersions = project.rootProject.ext.javaVersions
-        project.ext.isRuntimeJavaHomeSet = project.rootProject.ext.isRuntimeJavaHomeSet
-        project.ext.inFipsJvm = project.rootProject.ext.inFipsJvm
-    }
 
-    /**
-     * Add all the repositories needed to pull dependencies for the build
-     * @param project to be configured
-     */
-    private static void configureRepositories(Project project) {
-        project.repositories.mavenCentral()
-        project.repositories.maven { url "https://conjars.org/repo" }
-        project.repositories.maven { url "https://clojars.org/repo" }
-        project.repositories.maven { url 'https://repo.spring.io/plugins-release' }
+        // force all dependencies added directly to compile/testCompile to be non-transitive, except for Elasticsearch projects
+        Closure disableTransitiveDeps = { Dependency dep ->
+            if (dep instanceof ModuleDependency && !(dep instanceof ProjectDependency) && dep.group.startsWith('org.elasticsearch') == false) {
+                dep.transitive = false
 
-        // For Elasticsearch snapshots.
-        project.repositories.maven { url "https://snapshots.elastic.co/maven/" } // default
-        project.repositories.maven { url "https://oss.sonatype.org/content/repositories/snapshots" } // oss-only
-
-        // Elastic artifacts
-        project.repositories.maven { url "https://artifacts.elastic.co/maven/" } // default
-        project.repositories.maven { url "https://oss.sonatype.org/content/groups/public/" } // oss-only
-
-        // Add Ivy repos in order to pull Elasticsearch distributions that have bundled JDKs
-        for (String repo : ['snapshots', 'artifacts']) {
-            project.repositories.ivy {
-                url "https://${repo}.elastic.co/downloads"
-                layout "pattern", {
-                    artifact "elasticsearch/[module]-[revision](-[classifier]).[ext]"
-                }
-                metadataSources {
-                    artifact()
+                // also create a configuration just for this dependency version, so that later
+                // we can determine which transitive dependencies it has
+                String depConfig = transitiveDepConfigName(dep.group, dep.name, dep.version)
+                if (project.configurations.findByName(depConfig) == null) {
+                    project.configurations.create(depConfig)
+                    project.dependencies.add(depConfig, "${dep.group}:${dep.name}:${dep.version}")
                 }
             }
         }
 
-        // For Lucene Snapshots, use the lucene version automatically retrieved by build-tools
-        // to fetch it from the snapshots repository
-        String luceneVersion = project.rootProject.ext.luceneVersion
-        if (luceneVersion.contains('-snapshot')) {
-            // extract the revision number from the version with a regex matcher
-            List<String> matches = (luceneVersion =~ /\w+-snapshot-([a-z0-9]+)/).getAt(0) as List<String>
-            String revision = matches.get(1)
-            project.repositories.maven {
-                name = 'lucene-snapshots'
-                url = "https://s3.amazonaws.com/download.elasticsearch.org/lucenesnapshots/${revision}"
-            }
-        }
+        project.configurations.api.dependencies.all(disableTransitiveDeps)
+        project.configurations.implementation.dependencies.all(disableTransitiveDeps)
+        project.configurations.compileOnly.dependencies.all(disableTransitiveDeps)
+        project.configurations.runtimeOnly.dependencies.all(disableTransitiveDeps)
     }
 
     /**
@@ -233,36 +172,24 @@ class BuildPlugin implements Plugin<Project> {
 
         // Detail all common dependencies
         project.dependencies {
-            testCompile "junit:junit:${project.ext.junitVersion}"
-            testCompile "org.hamcrest:hamcrest-all:${project.ext.hamcrestVersion}"
+            testImplementation("junit:junit:${project.ext.junitVersion}")
+            testImplementation("org.hamcrest:hamcrest-all:${project.ext.hamcrestVersion}")
 
-            testCompile("org.elasticsearch:elasticsearch:${project.ext.elasticsearchVersion}") {
-                exclude group: "org.apache.logging.log4j", module: "log4j-api"
-                exclude group: "org.elasticsearch", module: "elasticsearch-cli"
-                exclude group: "org.elasticsearch", module: "elasticsearch-core"
-                exclude group: "org.elasticsearch", module: "elasticsearch-secure-sm"
-            }
+            testImplementation("joda-time:joda-time:2.8")
 
-            testRuntime "org.slf4j:slf4j-log4j12:1.7.6"
-            testRuntime "org.apache.logging.log4j:log4j-api:${project.ext.log4jVersion}"
-            testRuntime "org.apache.logging.log4j:log4j-core:${project.ext.log4jVersion}"
-            testRuntime "org.apache.logging.log4j:log4j-1.2-api:${project.ext.log4jVersion}"
-            testRuntime "net.java.dev.jna:jna:4.2.2"
-            testCompile "org.codehaus.groovy:groovy:${project.ext.groovyVersion}:indy"
-            testRuntime "org.locationtech.spatial4j:spatial4j:0.6"
-            testRuntime "com.vividsolutions:jts:1.13"
+            testImplementation("org.slf4j:slf4j-log4j12:1.7.6")
+            testImplementation("org.apache.logging.log4j:log4j-api:${project.ext.log4jVersion}")
+            testImplementation("org.apache.logging.log4j:log4j-core:${project.ext.log4jVersion}")
+            testImplementation("org.apache.logging.log4j:log4j-1.2-api:${project.ext.log4jVersion}")
+            testImplementation("net.java.dev.jna:jna:4.2.2")
+            testImplementation("org.codehaus.groovy:groovy:${project.ext.groovyVersion}:indy")
+            testImplementation("org.locationtech.spatial4j:spatial4j:0.6")
+            testImplementation("com.vividsolutions:jts:1.13")
 
-            // TODO: Remove when we merge ITests to test dirs
-            itestCompile("org.apache.hadoop:hadoop-minikdc:${project.ext.minikdcVersion}") {
-                // For some reason, the dependencies that are pulled in with MiniKDC have multiple resource files
-                // that cause issues when they are loaded. We exclude the ldap schema data jar to get around this.
-                exclude group: "org.apache.directory.api", module: "api-ldap-schema-data"
-            }
-            itestCompile project.sourceSets.main.output
-            itestCompile project.configurations.testCompile
-            itestCompile project.configurations.provided
-            itestCompile project.sourceSets.test.output
-            itestRuntime project.configurations.testRuntime
+            itestImplementation(project.sourceSets.main.output)
+            itestImplementation(project.configurations.testImplementation)
+            itestImplementation(project.sourceSets.test.output)
+            itestImplementation(project.configurations.testRuntimeClasspath)
         }
 
         // Deal with the messy conflicts out there
@@ -306,15 +233,31 @@ class BuildPlugin implements Plugin<Project> {
      */
     private static void configureBuildTasks(Project project) {
         // Target Java 1.8 compilation
-        JavaCompile compileJava = project.tasks.getByName('compileJava') as JavaCompile
-        compileJava.setSourceCompatibility('1.8')
-        compileJava.setTargetCompatibility('1.8')
-        compileJava.getOptions().setCompilerArgs(['-Xlint:unchecked', '-Xlint:options'])
+        project.sourceCompatibility = '1.8'
+        project.targetCompatibility = '1.8'
 
-        // Target Java 1.8 for tests
-        JavaCompile compileTestJava = project.tasks.getByName('compileTestJava') as JavaCompile
-        compileTestJava.setSourceCompatibility('1.8')
-        compileTestJava.setTargetCompatibility('1.8')
+        // TODO: Remove all root project distribution logic. It should exist in a separate dist project.
+        if (project != project.rootProject) {
+            SourceSet mainSourceSet = project.sourceSets.main
+
+            // Add java source to project's source elements and javadoc elements
+            FileCollection javaSourceDirs = mainSourceSet.java.sourceDirectories
+            javaSourceDirs.each { File srcDir ->
+                project.getArtifacts().add('sourceElements', srcDir)
+                project.getArtifacts().add('javadocElements', srcDir)
+            }
+
+            // Add scala sources to source elements if that plugin is applied
+            project.getPlugins().withType(ScalaPlugin.class) {
+                FileCollection scalaSourceDirs = mainSourceSet.scala.sourceDirectories
+                scalaSourceDirs.each { File scalaSrcDir ->
+                    project.getArtifacts().add('sourceElements', scalaSrcDir)
+                }
+            }
+        }
+
+        JavaCompile compileJava = project.tasks.getByName('compileJava') as JavaCompile
+        compileJava.getOptions().setCompilerArgs(['-Xlint:unchecked', '-Xlint:options'])
 
         // Enable HTML test reports
         Test testTask = project.tasks.getByName('test') as Test
@@ -330,7 +273,7 @@ class BuildPlugin implements Plugin<Project> {
         manifest.attributes['Implementation-URL'] = "https://github.com/elastic/elasticsearch-hadoop"
         manifest.attributes['Implementation-Vendor'] = "Elastic"
         manifest.attributes['Implementation-Vendor-Id'] = "org.elasticsearch.hadoop"
-        manifest.attributes['Repository-Revision'] = project.ext.revHash
+        manifest.attributes['Repository-Revision'] = BuildParams.gitRevision
         String build = System.env['ESHDP.BUILD']
         if (build != null) {
             manifest.attributes['Build'] = build
@@ -343,11 +286,20 @@ class BuildPlugin implements Plugin<Project> {
             spec.expand(copyright: new Date().format('yyyy'), version: project.version)
         }
 
+        if (project != project.rootProject) {
+            project.getArtifacts().add('distElements', jar)
+        }
+
         // Jar up the sources of the project
         Jar sourcesJar = project.tasks.create('sourcesJar', Jar)
         sourcesJar.dependsOn(project.tasks.classes)
         sourcesJar.classifier = 'sources'
         sourcesJar.from(project.sourceSets.main.allSource)
+        // TODO: Remove when root project does not handle distribution
+        if (project != project.rootProject) {
+            sourcesJar.from(project.configurations.additionalSources)
+            project.getArtifacts().add('distElements', sourcesJar)
+        }
 
         // Configure javadoc
         Javadoc javadoc = project.tasks.getByName('javadoc') as Javadoc
@@ -359,6 +311,12 @@ class BuildPlugin implements Plugin<Project> {
                 "org/elasticsearch/hadoop/util/**",
                 "org/apache/hadoop/hive/**"
         ]
+        // TODO: Remove when root project does not handle distribution
+        if (project != project.rootProject) {
+            javadoc.source += project.files(project.configurations.javadocSources)
+        }
+        // Set javadoc executable to runtime Java (1.8)
+        javadoc.executable = new File(project.ext.runtimeJavaHome, 'bin/javadoc')
 
         MinimalJavadocOptions javadocOptions = javadoc.getOptions()
         javadocOptions.docFilesSubDirs = true
@@ -367,9 +325,7 @@ class BuildPlugin implements Plugin<Project> {
         javadocOptions.author = false
         javadocOptions.header = project.name
         javadocOptions.showFromProtected()
-        if (project.ext.java8) {
-            javadocOptions.addStringOption('Xdoclint:none', '-quiet')
-        }
+        javadocOptions.addStringOption('Xdoclint:none', '-quiet')
         javadocOptions.groups = [
                 'Elasticsearch Map/Reduce' : ['org.elasticsearch.hadoop.mr*'],
                 'Elasticsearch Hive' : ['org.elasticsearch.hadoop.hive*'],
@@ -378,7 +334,7 @@ class BuildPlugin implements Plugin<Project> {
                 'Elasticsearch Storm' : ['org.elasticsearch.storm*'],
         ]
         javadocOptions.links = [ // External doc links
-                "https://docs.oracle.com/javase/6/docs/api/",
+                "https://docs.oracle.com/javase/8/docs/api/",
                 "https://commons.apache.org/proper/commons-logging/apidocs/",
                 "https://hadoop.apache.org/docs/stable2/api/",
                 "https://pig.apache.org/docs/r0.15.0/api/",
@@ -391,6 +347,9 @@ class BuildPlugin implements Plugin<Project> {
         Jar javadocJar = project.tasks.create('javadocJar', Jar)
         javadocJar.classifier = 'javadoc'
         javadocJar.from(project.tasks.javadoc)
+        if (project != project.rootProject) {
+            project.getArtifacts().add('distElements', javadocJar)
+        }
 
         // Task for creating ALL of a project's jars - Like assemble, but this includes the sourcesJar and javadocJar.
         Task pack = project.tasks.create('pack')
@@ -469,17 +428,6 @@ class BuildPlugin implements Plugin<Project> {
                 dep.scope == 'test' || dep.artifactId == 'elasticsearch-hadoop-mr'
             }
 
-            // Mark the optional dependencies to actually be optional
-            generatedPom.dependencies.findAll { it.scope == 'optional' }.each {
-                it.optional = "true"
-            }
-
-            // By default propdeps models optional dependencies as compile/optional
-            // for es-hadoop optional is best if these are modeled as provided/optional
-            generatedPom.dependencies.findAll { it.optional == "true" }.each {
-                it.scope = "provided"
-            }
-
             // Storm hosts their jars outside of maven central.
             boolean storm = generatedPom.dependencies.any { it.groupId == 'org.apache.storm' }
 
@@ -516,14 +464,8 @@ class BuildPlugin implements Plugin<Project> {
                 }
                 developers {
                     developer {
-                        id = 'jbaiera'
-                        name = 'James Baiera'
-                        email = 'james.baiera@elastic.co'
-                    }
-                    developer {
-                        id = 'costin'
-                        name = 'Costin Leau'
-                        email = 'costin@elastic.co'
+                        name = 'Elastic'
+                        url = 'https://www.elastic.co'
                     }
                 }
             }
@@ -540,51 +482,51 @@ class BuildPlugin implements Plugin<Project> {
      * @param project to be configured
      */
     private static void configureIntegrationTestTask(Project project) {
-        Jar hadoopTestingJar = project.rootProject.tasks.findByName('hadoopTestingJar') as Jar
-        if (hadoopTestingJar == null) {
-            // jar used for testing Hadoop remotely (es-hadoop + tests)
-            hadoopTestingJar = project.rootProject.tasks.create('hadoopTestingJar', Jar)
-            hadoopTestingJar.dependsOn(project.rootProject.tasks.getByName('jar'))
-            hadoopTestingJar.classifier = 'testing'
-            project.logger.info("Created Remote Testing Jar")
-        }
-
-        // Add this project's classes to the testing uber-jar
-        hadoopTestingJar.from(project.sourceSets.test.output)
-        hadoopTestingJar.from(project.sourceSets.main.output)
-        hadoopTestingJar.from(project.sourceSets.itest.output)
-
-        Test integrationTest = project.tasks.create('integrationTest', Test.class)
-        integrationTest.dependsOn(hadoopTestingJar)
-
-        integrationTest.testClassesDirs = project.sourceSets.itest.output.classesDirs
-        integrationTest.classpath = project.sourceSets.itest.runtimeClasspath
-        integrationTest.excludes = ["**/Abstract*.class"]
-
-        integrationTest.ignoreFailures = false
-
-        integrationTest.minHeapSize = "256m"
-        integrationTest.maxHeapSize = "2g"
-        if (!project.ext.java8) {
-            integrationTest.jvmArgs '-XX:MaxPermSize=496m'
-        }
-
-        integrationTest.testLogging {
-            displayGranularity 0
-            events "started", "failed" //, "standardOut", "standardError"
-            exceptionFormat "full"
-            showCauses true
-            showExceptions true
-            showStackTraces true
-            stackTraceFilters "groovy"
-            minGranularity 2
-            maxGranularity 2
-        }
-
-        integrationTest.reports.html.enabled = false
-
-        // Only add cluster settings if it's not the root project
         if (project != project.rootProject) {
+            TaskProvider<Task> itestJar = project.tasks.register('itestJar', Jar) { Jar itestJar ->
+                itestJar.dependsOn(project.tasks.getByName('jar'))
+                itestJar.getArchiveClassifier().set('testing')
+
+                // Add this project's classes to the testing uber-jar
+                itestJar.from(project.sourceSets.main.output)
+                itestJar.from(project.sourceSets.test.output)
+                itestJar.from(project.sourceSets.itest.output)
+            }
+
+            Test integrationTest = project.tasks.create('integrationTest', RestTestRunnerTask.class)
+            integrationTest.dependsOn(itestJar)
+
+            itestJar.configure { Jar jar ->
+                integrationTest.doFirst {
+                    integrationTest.systemProperty("es.hadoop.job.jar", jar.getArchiveFile().get().asFile.absolutePath)
+                }
+            }
+
+            integrationTest.testClassesDirs = project.sourceSets.itest.output.classesDirs
+            integrationTest.classpath = project.sourceSets.itest.runtimeClasspath
+            integrationTest.excludes = ["**/Abstract*.class"]
+
+            integrationTest.ignoreFailures = false
+
+            integrationTest.executable = "${project.ext.get('runtimeJavaHome')}/bin/java"
+            integrationTest.minHeapSize = "256m"
+            integrationTest.maxHeapSize = "2g"
+
+            integrationTest.testLogging {
+                displayGranularity 0
+                events "started", "failed" //, "standardOut", "standardError"
+                exceptionFormat "full"
+                showCauses true
+                showExceptions true
+                showStackTraces true
+                stackTraceFilters "groovy"
+                minGranularity 2
+                maxGranularity 2
+            }
+
+            integrationTest.reports.html.enabled = false
+
+            // Only add cluster settings if it's not the root project
             project.logger.info "Configuring ${project.name} integrationTest task to use ES Fixture"
             // Create the cluster fixture around the integration test.
             // There's probably a more elegant way to do this in Gradle
@@ -592,102 +534,36 @@ class BuildPlugin implements Plugin<Project> {
         }
     }
 
-    /**
-     * Configure the root testReport task with the test tasks in this project to report on, creating the report task
-     * on root if it is not created yet.
-     * @param project to configure
-     */
-    private static void configureTestReports(Project project) {
-        TestReport testReport = project.rootProject.getTasks().findByName('testReport') as TestReport
-        if (testReport == null) {
-            // Create the task on root if it is not created yet.
-            testReport = project.rootProject.getTasks().create('testReport', TestReport.class)
-            testReport.setDestinationDir(project.rootProject.file("${project.rootProject.getBuildDir()}/reports/allTests"))
-        }
-        testReport.reportOn(project.getTasks().getByName('test'))
-        testReport.reportOn(project.getTasks().getByName('integrationTest'))
-    }
+    private static void configurePrecommit(Project project) {
+        List<Object> precommitTasks = []
+        LicenseHeadersTask licenseHeaders = project.tasks.create('licenseHeaders', LicenseHeadersTask.class)
+        precommitTasks.add(licenseHeaders)
 
-    /**
-     * @param project that belongs to a git repo
-     * @return the file containing the hash for the current branch
-     */
-    private static File gitBranch(Project project) {
-        // parse the git files to find out the revision
-        File gitHead =  project.file("${project.rootDir}/.git/HEAD")
-        if (gitHead != null && !gitHead.exists()) {
-            // Try as a sub module
-            File subModuleGit = project.file("${project.rootDir}/.git")
-            if (subModuleGit != null && subModuleGit.exists()) {
-                String content = subModuleGit.text.trim()
-                if (content.startsWith("gitdir:")) {
-                    gitHead = project.file("${project.rootDir}/" + content.replace('gitdir: ','') + "/HEAD")
+        if (!project.path.startsWith(":qa")) {
+            TaskProvider<DependencyLicensesTask> dependencyLicenses = project.tasks.register('dependencyLicenses', DependencyLicensesTask.class) {
+                dependencies = project.configurations.runtimeClasspath.fileCollection {
+                    !(it instanceof ProjectDependency)
                 }
+                mapping from: /hadoop-.*/, to: 'hadoop'
+                mapping from: /hive-.*/, to: 'hive'
+                mapping from: /jackson-.*/, to: 'jackson'
+                mapping from: /spark-.*/, to: 'spark'
+                mapping from: /scala-.*/, to: 'scala'
             }
-        }
+            // we also create the updateShas helper task that is associated with dependencyLicenses
+            UpdateShasTask updateShas = project.tasks.create('updateShas', UpdateShasTask.class)
+            updateShas.parentTask = dependencyLicenses
 
-        if (gitHead != null && gitHead.exists()) {
-            String content = gitHead.text.trim()
-            if (content.startsWith("ref:")) {
-                return project.file("${project.rootDir}/.git/" + content.replace('ref: ',''))
-            }
-            return gitHead
+            precommitTasks.add(dependencyLicenses)
         }
-        return null
+        Task precommit = project.tasks.create('precommit')
+        precommit.dependsOn(precommitTasks)
+        project.tasks.getByName('check').dependsOn(precommit)
     }
 
-    /**
-     * @param gitHead file containing the the currently checked out ref
-     * @return the current commit version hash
-     */
-    private static String gitHash(File gitHead) {
-        String rev = "unknown"
-
-        if (gitHead != null && gitHead.exists()) {
-            rev = gitHead.text.trim()
+    private static void configureDependenciesInfo(Project project) {
+        if (!project.path.startsWith(":qa")) {
+            project.getPluginManager().apply(DependenciesInfoPlugin.class)
         }
-        return rev
-    }
-
-    /**
-     * @return the location of the JDK for the currently executing JVM
-     */
-    private static File findJavaHome() {
-        String javaHome = System.getenv('JAVA_HOME')
-        if (javaHome == null) {
-            if (System.getProperty("idea.active") != null || System.getProperty("eclipse.launcher") != null) {
-                // intellij doesn't set JAVA_HOME, so we use the jdk gradle was run with
-                javaHome = Jvm.current().javaHome
-            } else {
-                throw new GradleException('JAVA_HOME must be set to build Elasticsearch')
-            }
-        }
-        return new File(javaHome);
-    }
-
-    /** Runs the given javascript using jjs from the jdk, and returns the output */
-    private static String runJavascript(Project project, File javaHome, String script) {
-        ByteArrayOutputStream stdout = new ByteArrayOutputStream()
-        ByteArrayOutputStream stderr = new ByteArrayOutputStream()
-        if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-            // gradle/groovy does not properly escape the double quote for windows
-            script = script.replace('"', '\\"')
-        }
-        File jrunscriptPath = new File(javaHome, 'bin/jrunscript')
-        ExecResult result = project.exec {
-            executable = jrunscriptPath
-            args '-e', script
-            standardOutput = stdout
-            errorOutput = stderr
-            ignoreExitValue = true
-        }
-        if (result.exitValue != 0) {
-            project.logger.error("STDOUT:")
-            stdout.toString('UTF-8').eachLine { line -> project.logger.error(line) }
-            project.logger.error("STDERR:")
-            stderr.toString('UTF-8').eachLine { line -> project.logger.error(line) }
-            result.rethrowFailure()
-        }
-        return stdout.toString('UTF-8').trim()
     }
 }

@@ -1,3 +1,22 @@
+/*
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package org.elasticsearch.spark.integration
 
 import java.io.File
@@ -13,15 +32,16 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.Decimal
+import org.elasticsearch.hadoop.EsAssume
 import org.elasticsearch.hadoop.EsHadoopIllegalArgumentException
 import org.elasticsearch.hadoop.EsHadoopIllegalStateException
+import org.elasticsearch.hadoop.TestData
 import org.elasticsearch.hadoop.cfg.ConfigurationOptions
 import org.elasticsearch.hadoop.cfg.ConfigurationOptions.ES_INDEX_AUTO_CREATE
 import org.elasticsearch.hadoop.cfg.ConfigurationOptions.ES_MAPPING_EXCLUDE
 import org.elasticsearch.hadoop.cfg.ConfigurationOptions.ES_MAPPING_ID
 import org.elasticsearch.hadoop.cfg.ConfigurationOptions.ES_SPARK_DATAFRAME_WRITE_NULL_VALUES
-import org.elasticsearch.hadoop.mr.RestUtils
-import org.elasticsearch.hadoop.mr.{EsAssume => EsAssume}
+import org.elasticsearch.hadoop.rest.RestUtils
 import org.elasticsearch.hadoop.serialization.EsHadoopSerializationException
 import org.elasticsearch.hadoop.util.EsMajorVersion
 import org.elasticsearch.hadoop.util.StringUtils
@@ -39,6 +59,7 @@ import org.junit.Assert
 import org.junit.Assert.assertThat
 import org.junit.Assert.assertTrue
 import org.junit.BeforeClass
+import org.junit.ClassRule
 import org.junit.FixMethodOrder
 import org.junit.Rule
 import org.junit.Test
@@ -63,6 +84,8 @@ object AbstractScalaEsSparkStructuredStreaming {
     .setAppName(appName)
     .set("spark.executor.extraJavaOptions", "-XX:MaxPermSize=256m")
     .setJars(SparkUtils.ES_SPARK_TESTING_JAR)
+
+  @transient @ClassRule val testData = new TestData()
 
   @BeforeClass
   def setup(): Unit =  {
@@ -518,7 +541,7 @@ class AbstractScalaEsSparkStructuredStreaming(prefix: String, something: Boolean
     val docPath = wrapIndex(docEndpoint("test-basic-write-rich-mapping-id", "data", version))
     val test = new StreamingQueryTestHarness[Text](spark)
 
-    Source.fromURI(TestUtils.sampleArtistsDatUri())(Codec.ISO8859).getLines().foreach(s => test.withInput(Text(s)))
+    Source.fromURI(AbstractScalaEsSparkStructuredStreaming.testData.sampleArtistsDatUri())(Codec.ISO8859).getLines().foreach(s => test.withInput(Text(s)))
 
     test
       .runTest {
